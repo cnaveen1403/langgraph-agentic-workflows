@@ -1,40 +1,38 @@
-import ollama
 from typing import TypedDict, List
 import ollama
 from langgraph.graph import StateGraph, START, END
 
+
+# -------------------
+# STATE
+# -------------------
 class AgentState(TypedDict):
     question: str
     documents: List[str]
-    decision: str
     answer: str
-
-def retrieve_node(state: AgentState):
-    question = state["question"]
-
-    docs = [
-        "FastApi is a modern Python framework used to build APIs.",
-        "It supports asynchronous programming and high performance."
-    ]
-
-    return {"documents": docs}
+    decision: str
 
 
-def generate_node(state: AgentState):
+# -------------------
+# SUPERVISOR
+# -------------------
+def supervisor_node(state: AgentState):
 
     question = state["question"]
-    docs = state["documents"]
-
-    context = "\n".join(docs)
 
     prompt = f"""
-Use the context below to answer the question.
+You are a supervisor.
 
-Context:
-{context}
+Decide the next step:
+
+Options:
+- RESEARCH (if external info needed)
+- WRITE (if you can answer directly)
 
 Question:
 {question}
+
+Answer with one word: RESEARCH or WRITE
 """
 
     response = ollama.chat(
@@ -42,42 +40,28 @@ Question:
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return {"answer": response["message"]["content"]}
-
-def agent_reason_node(state: AgentState):
-    question = state["question"]
-
-    prompt = f"""
-Decide if the question needs document retrieval.
-
-Question:
-{question}
-
-Answer with only one word:
-YES or NO
-"""
-    response = ollama.chat(
-        model="mistral",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    decision = response["message"] ["content"].strip().upper()
+    decision = response["message"]["content"].strip().upper()
 
     return {"decision": decision}
 
-def tool_node(state: AgentState):
 
-    question = state["question"]
+# -------------------
+# RESEARCH AGENT
+# -------------------
+def research_agent(state: AgentState):
 
-    # simple simulated RAG
     docs = [
         "FastAPI is a modern Python framework used to build APIs.",
-        "It supports asynchronous programming and high performance."
+        "It supports async programming and high performance."
     ]
 
     return {"documents": docs}
 
-def generate_answer_node(state: AgentState):
+
+# -------------------
+# WRITER AGENT
+# -------------------
+def writer_agent(state: AgentState):
 
     question = state["question"]
     docs = state.get("documents", [])
@@ -85,7 +69,7 @@ def generate_answer_node(state: AgentState):
     context = "\n".join(docs)
 
     prompt = f"""
-Use the context to answer the question.
+Write a clear answer.
 
 Context:
 {context}
@@ -101,31 +85,39 @@ Question:
 
     return {"answer": response["message"]["content"]}
 
-def decide_tool(state: AgentState):
 
-    if state["decision"] == "YES":
-        return "tool"
+# -------------------
+# ROUTER
+# -------------------
+def supervisor_router(state: AgentState):
 
-    return "generate"
+    if state["decision"] == "RESEARCH":
+        return "research"
 
+    return "writer"
+
+
+# -------------------
+# GRAPH
+# -------------------
 builder = StateGraph(AgentState)
 
-builder.add_node("agent_reason", agent_reason_node)
-builder.add_node("tool", tool_node)
-builder.add_node("generate", generate_answer_node)
+builder.add_node("supervisor", supervisor_node)
+builder.add_node("research", research_agent)
+builder.add_node("writer", writer_agent)
 
-builder.add_edge(START, "agent_reason")
+builder.add_edge(START, "supervisor")
 
 builder.add_conditional_edges(
-    "agent_reason",
-    decide_tool,
+    "supervisor",
+    supervisor_router,
     {
-        "tool": "tool",
-        "generate": "generate"
+        "research": "research",
+        "writer": "writer"
     }
 )
 
-builder.add_edge("tool", "generate")
-builder.add_edge("generate", END)
+builder.add_edge("research", "writer")
+builder.add_edge("writer", END)
 
 graph = builder.compile()
