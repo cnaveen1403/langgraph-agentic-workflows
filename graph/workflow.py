@@ -1,3 +1,4 @@
+from graph.rag_tool import search_documents
 from typing import TypedDict, List
 import ollama
 from langgraph.graph import StateGraph, START, END
@@ -50,10 +51,9 @@ Answer with one word: RESEARCH or WRITE
 # -------------------
 def research_agent(state: AgentState):
 
-    docs = [
-        "FastAPI is a modern Python framework used to build APIs.",
-        "It supports async programming and high performance."
-    ]
+    question = state["question"]
+
+    docs = search_documents(question)
 
     return {"documents": docs}
 
